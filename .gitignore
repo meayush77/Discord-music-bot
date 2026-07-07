@@ -1,0 +1,18 @@
+*
+# Ignore virtual environment
+.venv/
+venv/
+env/
+
+# Ignore sensitive files
+.env
+service_account.json
+credential.json
+
+# Ignore cache and temporary files
+temp_cache/
+__pycache__/
+*.pyc
+temp_cache/
+
+# Keep code files (do not add * here)
