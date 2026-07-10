@@ -27,12 +27,11 @@ FOLDER_ID = os.environ.get("DRIVE_FOLDER_ID")
 # --- LEAN STATE STORAGE ---
 class JukeboxSession:
     def __init__(self):
-        self.catalog = []            # Flat chronological array of files fetched from Drive
-        self.current_track_id = None # FIXED: Track by unique immutable ID string instead of fragile integer index
+        self.catalog = []            
+        self.current_track_id = None 
         self.manual_skip = False     
 
     def get_current_track(self):
-        # Look up the track object dynamically using the immutable ID
         if not self.current_track_id or not self.catalog:
             return None
         for track in self.catalog:
@@ -41,7 +40,6 @@ class JukeboxSession:
         return None
 
     def get_current_index(self):
-        # Derive the human-readable index on-the-fly for UI display
         current_track = self.get_current_track()
         if current_track and current_track in self.catalog:
             return self.catalog.index(current_track)
@@ -106,11 +104,10 @@ async def handle_autoplay_next(ctx, error):
         session.manual_skip = False
         return
 
-    # Dynamically find where our current track lives in the catalog *right now*
     curr_idx = session.get_current_index()
     if curr_idx != -1 and curr_idx + 1 < len(session.catalog):
         next_track = session.catalog[curr_idx + 1]
-        session.current_track_id = next_track['id'] # Move reference forward safely
+        session.current_track_id = next_track['id']
         await start_track_stream(ctx)
     else:
         await ctx.send("🏁 Reached the end of your Google Drive folder playlist loop.")
@@ -165,15 +162,22 @@ async def list_tracks(ctx):
     if not files: return await ctx.send("No audio files detected inside your specified Drive directory.")
     
     session.catalog = files  
-    response = "**📁 Google Drive Jukebox Playlist Tracker:**\n\n"
     active_track = session.get_current_track()
     
+    # Split message into chunks to avoid 4000 limit
+    response = "**📁 Google Drive Jukebox Playlist Tracker:**\n\n"
+    
     for idx, f in enumerate(files, 1):
-        if active_track and f['id'] == active_track['id'] and ctx.voice_client and (ctx.voice_client.is_playing() or ctx.voice_client.is_paused()):
-            response += f"▶️ **{idx}. {f['name']}** *(Now Playing)*\n"
-        else:
-            response += f"{idx}. `{f['name']}`\n"
-    await ctx.send(response)
+        is_playing = (active_track and f['id'] == active_track['id'] and ctx.voice_client and (ctx.voice_client.is_playing() or ctx.voice_client.is_paused()))
+        line = f"▶️ **{idx}. {f['name']}** *(Now Playing)*\n" if is_playing else f"{idx}. `{f['name']}`\n"
+        
+        if len(response) + len(line) > 3000:
+            await ctx.send(response)
+            response = ""
+        response += line
+        
+    if response:
+        await ctx.send(response)
 
 @bot.command(name="play")
 async def play(ctx, *, user_input: str = None):
@@ -240,26 +244,10 @@ async def help_menu(ctx):
         description="Stream media sequentially direct from your Google Drive folder mapping layout. Prefix: `!`",
         color=discord.Color.blue()
     )
-    embed.add_field(
-        name="📁 Catalog Navigation",
-        value="`!list` - Lists all tracks in chronological order and shows what's playing.",
-        inline=False
-    )
-    embed.add_field(
-        name="▶️ Flow Controls",
-        value="`!play` - Resumes a paused stream, or kicks off track #1.\n`!play <number>` - Jumps right to an exact list track number coordinate.\n`!play <keyword>` - Searches and locks onto a track match using basic text parameters.",
-        inline=False
-    )
-    embed.add_field(
-        name="🎛️ Timeline Modifiers",
-        value="`!pause` - Freezes current timeline play state.\n`!resume` - Continues music playback.\n`!seek <seconds>` - Fast-forwards/rewinds directly to a specific timestamp frame coordinate.",
-        inline=False
-    )
-    embed.add_field(
-        name="🔌 Utility States",
-        value="`!join` - Forces bot to cross over into your voice room.\n`!leave` - Drops network voice socket pipelines completely and stops playback.",
-        inline=False
-    )
+    embed.add_field(name="📁 Catalog Navigation", value="`!list` - Lists all tracks and shows what's playing.", inline=False)
+    embed.add_field(name="▶️ Flow Controls", value="`!play` - Resumes/starts playback.\n`!play <number>` - Jumps to track number.\n`!play <keyword>` - Searches tracks.", inline=False)
+    embed.add_field(name="🎛️ Timeline Modifiers", value="`!pause`/`!resume` - Flow states.\n`!seek <seconds>` - Set timestamp.", inline=False)
+    embed.add_field(name="🔌 Utility States", value="`!join`/`!leave` - Voice room control.", inline=False)
     await ctx.send(embed=embed)
 
 web_app = Quart(__name__)
