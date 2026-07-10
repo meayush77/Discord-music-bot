@@ -34,8 +34,8 @@ class GoogleDriveManager:
         try:
             all_files = []
             
-            def scan_folder(current_id):
-                # Fetch items in the folder
+            def process_items(current_id):
+                # Fetch all items within the current directory
                 query = f"'{current_id}' in parents and trashed = false"
                 results = self.service.files().list(
                     q=query, spaces='drive', fields="files(id, name, mimeType)"
@@ -43,15 +43,14 @@ class GoogleDriveManager:
                 
                 items = results.get('files', [])
                 for item in items:
-                    # If it's a folder, look inside it
+                    # If it's a folder, recurse into it to find files
                     if item.get('mimeType') == 'application/vnd.google-apps.folder':
-                        scan_folder(item['id'])
-                    # Only add if it is an audio file
+                        process_items(item['id'])
+                    # If it's an audio file, add to the catalog
                     elif item.get('mimeType', '').startswith('audio/') or item.get('name', '').endswith(('.mp3', '.m4a', '.wav')):
                         all_files.append(item)
             
-            scan_folder(folder_id)
-            # Sort files by name for a consistent playlist
+            process_items(folder_id)
             return sorted(all_files, key=lambda x: x.get('name', ''))
             
         except Exception as e:
@@ -61,6 +60,7 @@ class GoogleDriveManager:
     def _manage_cache_size(self, new_file_size):
         if not os.path.exists(self.cache_dir): return
         total_size = sum(os.path.getsize(os.path.join(self.cache_dir, f)) for f in os.listdir(self.cache_dir) if os.path.isfile(os.path.join(self.cache_dir, f)))
+        
         while total_size + new_file_size > self.max_cache_size:
             files = [os.path.join(self.cache_dir, f) for f in os.listdir(self.cache_dir) if os.path.isfile(os.path.join(self.cache_dir, f))]
             if not files: break
