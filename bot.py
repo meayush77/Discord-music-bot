@@ -164,14 +164,15 @@ async def list_tracks(ctx):
     session.catalog = files  
     active_track = session.get_current_track()
     
-    # Split message into chunks to avoid 4000 limit
+    # Split message into chunks < 2000 chars to avoid HTTPException
     response = "**📁 Google Drive Jukebox Playlist Tracker:**\n\n"
     
     for idx, f in enumerate(files, 1):
         is_playing = (active_track and f['id'] == active_track['id'] and ctx.voice_client and (ctx.voice_client.is_playing() or ctx.voice_client.is_paused()))
         line = f"▶️ **{idx}. {f['name']}** *(Now Playing)*\n" if is_playing else f"{idx}. `{f['name']}`\n"
         
-        if len(response) + len(line) > 3000:
+        # Check buffer length before adding line; use 1800 to stay safely under 2000
+        if len(response) + len(line) > 1800:
             await ctx.send(response)
             response = ""
         response += line
