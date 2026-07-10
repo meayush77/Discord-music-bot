@@ -34,16 +34,29 @@ class GoogleDriveManager:
 
     def list_audio_files(self, folder_id):
         try:
-            query = (
-                f"'{folder_id}' in parents and "
-                f"(mimeType contains 'audio/' or name contains '.mp3' or name contains '.m4a' or name contains '.wav') "
-                f"and trashed = false"
-            )
-            results = self.service.files().list(
-                q=query, spaces='drive', fields="files(id, name, mimeType)", pageSize=50
-            ).execute()
-            print(f"DEBUG: Raw Google Drive API response: {results}")
-            return results.get('files', [])
+            # Step 1: Get subfolders to support the batch structure
+            folder_query = f"'{folder_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+            folders = self.service.files().list(q=folder_query, fields="files(id)").execute().get('files', [])
+            
+            # Step 2: Combine root folder and subfolders to scan[cite: 3]
+            folders_to_scan = [folder_id] + [f['id'] for f in folders]
+            all_files = []
+            
+            # Step 3: Scan each folder for audio files[cite: 3]
+            for f_id in folders_to_scan:
+                query = (
+                    f"'{f_id}' in parents and "
+                    f"(mimeType contains 'audio/' or name contains '.mp3' or name contains '.m4a' or name contains '.wav') "
+                    f"and trashed = false"
+                )
+                results = self.service.files().list(
+                    q=query, spaces='drive', fields="files(id, name, mimeType)", pageSize=100
+                ).execute()
+                all_files.extend(results.get('files', []))
+            
+            # Return sorted files to keep playlist order predictable[cite: 3]
+            return sorted(all_files, key=lambda x: x['name'])
+            
         except Exception as e:
             print(f"Error listing files from Drive: {e}")
             return []
@@ -51,45 +64,23 @@ class GoogleDriveManager:
     def _manage_cache_size(self, new_file_size):
         if not os.path.exists(self.cache_dir):
             return
-        total_size = 0
-        for f in os.listdir(self.cache_dir):
-            file_path = os.path.join(self.cache_dir, f)
-            if os.path.isfile(file_path):
-                total_size += os.path.getsize(file_path)
+        total_size = sum(os.path.getsize(os.path.join(self.cache_dir, f)) for f in os.listdir(self.cache_dir) if os.path.isfile(os.path.join(self.cache_dir, f)))
         
         while total_size + new_file_size > self.max_cache_size:
-            files = []
-            for f in os.listdir(self.cache_dir):
-                file_path = os.path.join(self.cache_dir, f)
-                if os.path.isfile(file_path):
-                    files.append(file_path)
-            if not files:
-                break
+            files = [os.path.join(self.cache_dir, f) for f in os.listdir(self.cache_dir) if os.path.isfile(os.path.join(self.cache_dir, f))]
+            if not files: break
             oldest_file = min(files, key=os.path.getatime)
             total_size -= os.path.getsize(oldest_file)
-            try:
-                os.remove(oldest_file)
-                print(f"🧹 Cache Eviction: Removed stale file: {oldest_file}")
-            except Exception as e:
-                print(f"Failed to evict cached file {oldest_file}: {e}")
-                break
+            os.remove(oldest_file)
 
     def get_or_download_track(self, file_id, file_name):
         local_path = os.path.join(self.cache_dir, f"{file_id}.mp3")
         if os.path.exists(local_path):
-            print(f"⚡ Cache Hit! Playing straight from local cache: {file_name}")
-            try:
-                os.utime(local_path, None)
-            except Exception:
-                pass
             return local_path, True
 
-        print(f"📥 Cache Miss. Pulling from Google Drive directly to disk: {file_name}")
         try:
             file_metadata = self.service.files().get(fileId=file_id, fields="size").execute()
-            file_size = int(file_metadata.get("size", 0))
-            
-            self._manage_cache_size(file_size)
+            self._manage_cache_size(int(file_metadata.get("size", 0)))
 
             request = self.service.files().get_media(fileId=file_id)
             with open(local_path, "wb") as file_stream:
@@ -99,7 +90,4 @@ class GoogleDriveManager:
                     status, done = downloader.next_chunk()
             return local_path, True
         except Exception as e:
-            print(f"Error resolving download pipeline for file {file_id}: {e}")
-            if os.path.exists(local_path):
-                os.remove(local_path)
             return None, False
